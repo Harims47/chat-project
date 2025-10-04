@@ -1,4 +1,5 @@
 import React, { useState, useEffect, useRef } from "react";
+import { Copy, RefreshCcw } from "lucide-react";
 
 const API = import.meta.env.VITE_API_BASE || "http://localhost:4000";
 
@@ -41,9 +42,20 @@ export default function App() {
     "Default assistant behavior"
   );
   const [attachments, setAttachments] = useState([]);
+  const [searchTerm, setSearchTerm] = useState("");
+  const filteredConversations = conversations
+    .filter(
+      (c) =>
+        c.title.toLowerCase().includes(searchTerm.toLowerCase()) ||
+        c.last.toLowerCase().includes(searchTerm.toLowerCase())
+    )
+    .sort((a, b) => (b.ts || 0) - (a.ts || 0));
+
   const scrollRef = useRef();
   const sseRef = useRef(null);
   const manualScrollRef = useRef(false);
+  const [search, setSearch] = useState("");
+  const [searchQuery, setSearchQuery] = useState("");
 
   useEffect(() => {
     document.documentElement.classList.toggle("dark", theme === "dark");
@@ -413,7 +425,7 @@ export default function App() {
                   : "bg-gray-200 dark:bg-gray-800"
               }`}>
               <div className="whitespace-pre-wrap">{m.content}</div>
-              <div className="flex justify-between items-center mt-2 text-xs text-white-500">
+              {/* <div className="flex justify-between items-center mt-2 text-xs text-white-500">
                 <div>{formatTime(m.ts)}</div>
                 <div className="flex gap-2">
                   <button
@@ -424,6 +436,26 @@ export default function App() {
                   {m.role === "assistant" && (
                     <button onClick={() => retry(m)} className="underline">
                       Retry
+                    </button>
+                  )}
+                </div>
+              </div> */}
+              <div className="flex justify-between items-center mt-2 text-xs text-gray-500">
+                <div>{formatTime(m.ts)}</div>
+                <div className="flex gap-3 items-center">
+                  <button
+                    onClick={() => copyText(m.content)}
+                    title="Copy message"
+                    className="text-white hover:text-blue-500 transition-colors">
+                    <Copy size={14} />
+                  </button>
+
+                  {m.role === "assistant" && (
+                    <button
+                      onClick={() => retry(m)}
+                      title="Retry"
+                      className="text-white hover:text-green-500 transition-colors">
+                      <RefreshCcw size={14} />
                     </button>
                   )}
                 </div>
@@ -486,11 +518,112 @@ export default function App() {
           </div>
         </div>
       </main>
-
       {showPalette && (
+        <div
+          className="fixed inset-0 flex items-start justify-center pt-24 bg-black/40"
+          onClick={() => setShowPalette(false)}>
+          <div
+            className="bg-white dark:bg-gray-800 border rounded w-96 p-4 shadow-2xl"
+            onClick={(e) => e.stopPropagation()}>
+            <div className="flex justify-between items-center mb-2">
+              <div className="text-sm font-semibold">Command Palette</div>
+              <button
+                onClick={() => setShowPalette(false)}
+                className="text-gray-500 hover:text-gray-300 text-lg">
+                ✕
+              </button>
+            </div>
+
+            {/* 🔍 Search input */}
+            <input
+              type="text"
+              placeholder="Search conversations or type a command..."
+              className="w-full mb-3 p-2 rounded bg-gray-100 dark:bg-gray-700 text-sm"
+              value={searchTerm}
+              onChange={(e) => setSearchTerm(e.target.value)}
+            />
+
+            {/* 💬 Filtered chat list */}
+            <div className="max-h-60 overflow-auto mb-3">
+              {filteredConversations.length > 0 ? (
+                filteredConversations.map((c) => (
+                  <div
+                    key={c.id}
+                    onClick={() => {
+                      setActive(c.id);
+                      setMessages(
+                        JSON.parse(localStorage.getItem("msgs-" + c.id)) || []
+                      );
+                      setShowPalette(false);
+                    }}
+                    className={`p-2 rounded cursor-pointer ${
+                      active === c.id
+                        ? "bg-gray-200 dark:bg-gray-700"
+                        : "hover:bg-gray-100 dark:hover:bg-gray-700"
+                    }`}>
+                    <div className="font-semibold">{c.title}</div>
+                    <div className="text-xs text-gray-500">{c.last}</div>
+                  </div>
+                ))
+              ) : (
+                <div className="text-sm text-gray-500 text-center">
+                  No conversations found
+                </div>
+              )}
+            </div>
+
+            {/* ⚙️ Commands */}
+            <button
+              className="block w-full text-left p-2 hover:bg-gray-100 dark:hover:bg-gray-700 rounded mb-2"
+              onClick={() => {
+                fetch(API + "/api/chat", {
+                  method: "POST",
+                  headers: { "Content-Type": "application/json" },
+                  body: JSON.stringify({ messages: [] }),
+                })
+                  .then((r) => r.json())
+                  .then((d) => {
+                    if (d.conversationId) {
+                      setActive(d.conversationId);
+                      localStorage.setItem(
+                        "msgs-" + d.conversationId,
+                        JSON.stringify([])
+                      );
+                      setMessages([]);
+                    }
+                    fetch(API + "/api/conversations")
+                      .then((r) => r.json())
+                      .then(setConversations);
+                  });
+                setShowPalette(false);
+              }}>
+              ➕ Create new conversation
+            </button>
+
+            <button
+              className="block w-full text-left p-2 hover:bg-gray-100 dark:hover:bg-gray-700 rounded"
+              onClick={() => {
+                setTheme((t) => (t === "light" ? "dark" : "light"));
+                setShowPalette(false);
+              }}>
+              🌗 Toggle theme
+            </button>
+          </div>
+        </div>
+      )}
+
+      {/* {showPalette && (
         <div className="fixed inset-0 flex items-start justify-center pt-24">
           <div className="bg-white dark:bg-gray-800 border rounded w-96 p-4 shadow-2xl">
-            <div className="text-sm font-semibold mb-2">Command Palette</div>
+            <div className="flex justify-between items-center mb-3">
+              <div className="text-sm font-semibold">Command Palette</div>
+              <button
+                onClick={() => setShowPalette(false)}
+                className="text-gray-500 hover:text-gray-800 dark:hover:text-white text-lg font-bold"
+                title="Close">
+                ×
+              </button>
+            </div>
             <button
               className="block w-full text-left p-2 hover:bg-gray-100 dark:hover:bg-gray-700 rounded"
               onClick={() => {
@@ -529,7 +662,7 @@ export default function App() {
             </button>
           </div>
         </div>
-      )}
+      )} */}
     </div>
   );
 }
