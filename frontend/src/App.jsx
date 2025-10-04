@@ -1,0 +1,533 @@
+import React, { useState, useEffect, useRef } from "react";
+
+const API = import.meta.env.VITE_API_BASE || "http://localhost:4000";
+
+const MOCK_REPLIES = [
+  "Hello! 👋 This is a mock assistant reply.",
+  "Sure, here’s a predefined answer from mock data.",
+  "This chat is stored locally per conversation.",
+  "That's interesting — tell me more!",
+  "Mock reply: your system is working fine locally!",
+];
+
+function useLocal(key, initial) {
+  const [state, setState] = useState(() => {
+    try {
+      return JSON.parse(localStorage.getItem(key)) ?? initial;
+    } catch {
+      return initial;
+    }
+  });
+  useEffect(() => {
+    localStorage.setItem(key, JSON.stringify(state));
+  }, [key, state]);
+  return [state, setState];
+}
+
+function formatTime(ts) {
+  return new Date(ts).toLocaleTimeString();
+}
+
+export default function App() {
+  const [conversations, setConversations] = useState([]);
+  const [active, setActive] = useLocal("activeConv", null);
+  const [messages, setMessages] = useLocal("msgs-" + (active || "none"), []);
+  const [input, setInput] = useState("");
+  const [streaming, setStreaming] = useState(false);
+  const [theme, setTheme] = useLocal("theme", "light");
+  const [showPalette, setShowPalette] = useState(false);
+  const [systemPrompt, setSystemPrompt] = useLocal(
+    "sysPrompt",
+    "Default assistant behavior"
+  );
+  const [attachments, setAttachments] = useState([]);
+  const scrollRef = useRef();
+  const sseRef = useRef(null);
+  const manualScrollRef = useRef(false);
+
+  useEffect(() => {
+    document.documentElement.classList.toggle("dark", theme === "dark");
+  }, [theme]);
+
+  // Fetch conversations on load
+  useEffect(() => {
+    fetch(API + "/api/conversations")
+      .then((r) => r.json())
+      .then(setConversations)
+      .catch(() => setConversations([]));
+  }, []);
+
+  // Load active messages if active set changed
+  // Load active messages from backend when a conversation is opened
+  useEffect(() => {
+    if (!active) return;
+    const stored = JSON.parse(localStorage.getItem("msgs-" + active));
+    if (stored) setMessages(stored);
+    else setMessages([]);
+
+    // ✅ Auto-scroll to bottom always on chat switch
+    requestAnimationFrame(() => {
+      const el = scrollRef.current;
+      if (el) el.scrollTop = el.scrollHeight;
+    });
+
+    fetch(API + "/api/conversations/" + active)
+      .then((r) => r.json())
+      .then((data) => {
+        setMessages(data);
+        // persist locally for quick reload
+        localStorage.setItem("msgs-" + active, JSON.stringify(data));
+      })
+      .catch((err) => {
+        console.error("Error loading chat:", err);
+        setMessages([]);
+      });
+  }, [active]);
+
+  // persist scroll position per conversation
+  useEffect(() => {
+    const el = scrollRef.current;
+    if (!el) return;
+    const handler = () => {
+      manualScrollRef.current =
+        Math.abs(el.scrollHeight - (el.scrollTop + el.clientHeight)) > 200;
+      localStorage.setItem("scroll-" + (active || "none"), el.scrollTop);
+    };
+    el.addEventListener("scroll", handler);
+    return () => el.removeEventListener("scroll", handler);
+  }, [active]);
+
+  // keyboard shortcuts
+  useEffect(() => {
+    const h = (e) => {
+      if ((e.ctrlKey || e.metaKey) && e.key === "k") {
+        e.preventDefault();
+        setShowPalette((s) => !s);
+      }
+      if (e.key === "Escape") {
+        setShowPalette(false);
+        document.activeElement.blur();
+      }
+    };
+    window.addEventListener("keydown", h);
+    return () => window.removeEventListener("keydown", h);
+  }, []);
+
+  function connectSSE(prompt) {
+    if (sseRef.current) {
+      sseRef.current.close();
+      sseRef.current = null;
+      setStreaming(false);
+    }
+    setStreaming(true);
+    try {
+      const url = new URL(API + "/api/chat/sse");
+      url.searchParams.set("conversationId", active || "");
+      url.searchParams.set("prompt", prompt);
+      const es = new EventSource(url.toString());
+      sseRef.current = es;
+
+      // placeholder assistant message
+      const assistantId = "a" + Date.now();
+      setMessages((prev) => {
+        const next = [
+          ...prev,
+          { id: assistantId, role: "assistant", content: "", ts: Date.now() },
+        ];
+        localStorage.setItem(
+          "msgs-" + (active || "none"),
+          JSON.stringify(next)
+        );
+        return next;
+      });
+
+      es.onmessage = (ev) => {
+        if (ev.data === "[DONE]") {
+          setStreaming(false);
+          es.close();
+          sseRef.current = null;
+          return;
+        }
+        setMessages((prev) => {
+          const last = prev[prev.length - 1];
+          if (last && last.role === "assistant") {
+            const updated = { ...last, content: last.content + " " + ev.data };
+            const next = [...prev.slice(0, -1), updated];
+            localStorage.setItem(
+              "msgs-" + (active || "none"),
+              JSON.stringify(next)
+            );
+            return next;
+          }
+          return prev;
+        });
+        const el = scrollRef.current;
+        if (el && !manualScrollRef.current) {
+          el.scrollTop = el.scrollHeight;
+        }
+      };
+
+      es.onerror = () => {
+        setStreaming(false);
+        try {
+          es.close();
+        } catch {}
+        sseRef.current = null;
+      };
+    } catch (err) {
+      // 🔹 If backend SSE fails, fallback mock reply
+      const reply =
+        MOCK_REPLIES[Math.floor(Math.random() * MOCK_REPLIES.length)];
+      const mockMsg = {
+        id: "a" + Date.now(),
+        role: "assistant",
+        content: reply,
+        ts: Date.now(),
+      };
+      setMessages((prev) => {
+        const next = [...prev, mockMsg];
+        localStorage.setItem(
+          "msgs-" + (active || "none"),
+          JSON.stringify(next)
+        );
+        return next;
+      });
+      setStreaming(false);
+    }
+  }
+
+  function stopStreaming() {
+    if (sseRef.current) {
+      sseRef.current.close();
+      sseRef.current = null;
+    }
+    setStreaming(false);
+  }
+
+  async function send(manualRetry = false) {
+    if (!input.trim() && attachments.length === 0 && !manualRetry) return;
+    const userMsg = {
+      id: "u" + Date.now(),
+      role: "user",
+      content: input,
+      ts: Date.now(),
+      attachments: attachments.map((a) => a.attachmentId),
+    };
+    const nextMsgs = [...messages, userMsg];
+    setMessages(nextMsgs);
+
+    if (active) {
+      // ✅ Save immediately if chat already has ID
+      localStorage.setItem("msgs-" + active, JSON.stringify(nextMsgs));
+    } else {
+      // 🚀 Wait for backend to assign new conversationId
+      fetch(API + "/api/chat", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          conversationId: active,
+          messages: [userMsg],
+          attachments: userMsg.attachments,
+          systemPrompt,
+        }),
+      })
+        .then((r) => r.json())
+        .then((data) => {
+          if (data.conversationId) {
+            setActive(data.conversationId);
+            localStorage.setItem(
+              "msgs-" + data.conversationId,
+              JSON.stringify(nextMsgs)
+            );
+          }
+        })
+        .catch(() => {});
+      // Start mock stream
+      connectSSE(userMsg.content || systemPrompt);
+      return;
+    }
+
+    setInput("");
+    setAttachments([]);
+    // inform backend
+    fetch(API + "/api/chat", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        conversationId: active,
+        messages: [userMsg],
+        attachments: userMsg.attachments,
+        systemPrompt,
+      }),
+    })
+      .then((r) => r.json())
+      .then((data) => {
+        if (data.conversationId && !active) {
+          setActive(data.conversationId);
+        }
+      })
+      .catch(() => {});
+    // connect SSE to stream assistant reply
+    connectSSE(userMsg.content || systemPrompt);
+  }
+
+  function onFileChange(e) {
+    const f = e.target.files[0];
+    if (!f) return;
+    const form = new FormData();
+    form.append("file", f);
+    fetch(API + "/api/upload", { method: "POST", body: form })
+      .then((r) => r.json())
+      .then((data) => {
+        if (data.attachmentId) {
+          setAttachments((prev) => [...prev, data]);
+        }
+      })
+      .catch(() => {});
+    e.target.value = "";
+  }
+
+  function copyText(text) {
+    navigator.clipboard.writeText(text);
+  }
+
+  function retry(msg) {
+    const idx = messages.findIndex((m) => m.id === msg.id);
+    if (idx > 0) {
+      // Find previous user message before this assistant reply
+      const prevUserMsg = [...messages]
+        .slice(0, idx)
+        .reverse()
+        .find((m) => m.role === "user");
+
+      if (prevUserMsg) {
+        // Remove only the assistant message being retried
+        const updatedMsgs = messages.filter((m) => m.id !== msg.id);
+        setMessages(updatedMsgs);
+        localStorage.setItem(
+          "msgs-" + (active || "none"),
+          JSON.stringify(updatedMsgs)
+        );
+
+        // Start retry streaming immediately (no stuck text)
+        setStreaming(true);
+        connectSSE(prevUserMsg.content || systemPrompt);
+      }
+    }
+  }
+
+  async function setTitleManual(id, title) {
+    await fetch(API + "/api/conversations/" + id + "/title", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ title }),
+    });
+    // refresh list
+    fetch(API + "/api/conversations")
+      .then((r) => r.json())
+      .then(setConversations);
+  }
+
+  // when messages change, update conversations list preview
+  useEffect(() => {
+    if (!active) return;
+    const last = messages[messages.length - 1];
+    setConversations((prev) => {
+      const idx = prev.findIndex((c) => c.id === active);
+      const entry = {
+        id: active,
+        title: prev[idx]?.title || "Conversation",
+        last: last?.content?.slice(0, 60),
+        ts: last?.ts || Date.now(),
+      };
+      if (idx >= 0) {
+        const copy = [...prev];
+        copy[idx] = entry;
+        return copy;
+      }
+      return [entry, ...prev];
+    });
+  }, [messages, active]);
+
+  return (
+    <div className="h-screen flex bg-gray-50 dark:bg-gray-900 text-gray-900 dark:text-gray-100">
+      <aside className="w-80 border-r p-2 bg-white dark:bg-gray-800">
+        <div className="flex items-center justify-between mb-3">
+          <h2 className="text-lg font-bold">Chats</h2>
+          <div className="flex items-center gap-2">
+            <select
+              value={systemPrompt}
+              onChange={(e) => setSystemPrompt(e.target.value)}
+              className="text-sm p-1 rounded bg-gray-100 dark:bg-gray-700">
+              <option value="Default assistant behavior">Default</option>
+              <option value="Be concise and professional">Concise</option>
+              <option value="Be friendly and casual">Friendly</option>
+            </select>
+            <button
+              onClick={() =>
+                setTheme((t) => (t === "light" ? "dark" : "light"))
+              }
+              title="Toggle theme"
+              className="px-2 py-1 rounded bg-gray-200 dark:bg-gray-700">
+              {theme === "light" ? "🌙" : "☀️"}
+            </button>
+          </div>
+        </div>
+
+        <div
+          className="space-y-2 overflow-auto"
+          style={{ maxHeight: "calc(100vh - 140px)" }}>
+          {conversations.map((c) => (
+            <div
+              key={c.id}
+              onClick={() => setActive(c.id)}
+              className={`p-2 rounded cursor-pointer ${
+                active === c.id
+                  ? "bg-gray-200 dark:bg-gray-700"
+                  : "hover:bg-gray-100 dark:hover:bg-gray-700"
+              }`}>
+              <div className="flex justify-between">
+                <div className="font-semibold">{c.title}</div>
+                <div className="text-xs text-gray-500">
+                  {c.ts ? new Date(c.ts).toLocaleTimeString() : ""}
+                </div>
+              </div>
+              <div className="text-sm text-gray-600 dark:text-gray-400">
+                {c.last}
+              </div>
+            </div>
+          ))}
+        </div>
+      </aside>
+
+      <main className="flex-1 flex flex-col">
+        <div className="flex-1 overflow-auto p-4" ref={scrollRef}>
+          {messages.map((m) => (
+            <div
+              key={m.id}
+              className={`max-w-[70%] my-2 p-3 rounded ${
+                m.role === "user"
+                  ? "ml-auto bg-blue-600 text-white"
+                  : "bg-gray-200 dark:bg-gray-800"
+              }`}>
+              <div className="whitespace-pre-wrap">{m.content}</div>
+              <div className="flex justify-between items-center mt-2 text-xs text-white-500">
+                <div>{formatTime(m.ts)}</div>
+                <div className="flex gap-2">
+                  <button
+                    onClick={() => copyText(m.content)}
+                    className="underline">
+                    Copy
+                  </button>
+                  {m.role === "assistant" && (
+                    <button onClick={() => retry(m)} className="underline">
+                      Retry
+                    </button>
+                  )}
+                </div>
+              </div>
+            </div>
+          ))}
+          {streaming && (
+            <div className="italic text-sm">
+              Assistant is typing...{" "}
+              <button onClick={stopStreaming} className="ml-2 underline">
+                Stop
+              </button>
+            </div>
+          )}
+        </div>
+
+        <div className="p-4 border-t bg-white dark:bg-gray-800">
+          <div className="flex gap-2 items-center mb-2">
+            {attachments.map((a) => (
+              <div
+                key={a.attachmentId}
+                className="px-2 py-1 bg-gray-100 dark:bg-gray-700 rounded">
+                {a.filename || a.attachmentId}
+              </div>
+            ))}
+          </div>
+          <textarea
+            value={input}
+            onChange={(e) => setInput(e.target.value)}
+            onKeyDown={(e) => {
+              if (e.key === "Enter" && !e.shiftKey) {
+                e.preventDefault();
+                send();
+              }
+            }}
+            rows={3}
+            className="w-full p-2 rounded resize-none bg-gray-50 dark:bg-gray-900"
+            placeholder="Type a message (Enter to send, Shift+Enter newline)"
+          />
+          <div className="mt-2 flex justify-between items-center">
+            <div className="flex items-center gap-2">
+              <label className="px-2 py-1 border rounded cursor-pointer bg-gray-100 dark:bg-gray-700">
+                Attach
+                <input
+                  type="file"
+                  accept=".txt,.pdf"
+                  onChange={onFileChange}
+                  style={{ display: "none" }}
+                />
+              </label>
+              <button
+                onClick={() => send()}
+                className="px-4 py-2 rounded bg-blue-600 text-white">
+                Send
+              </button>
+            </div>
+            <div className="text-sm text-gray-500">
+              Press <kbd>Ctrl/Cmd</kbd>+<kbd>K</kbd> for commands
+            </div>
+          </div>
+        </div>
+      </main>
+
+      {showPalette && (
+        <div className="fixed inset-0 flex items-start justify-center pt-24">
+          <div className="bg-white dark:bg-gray-800 border rounded w-96 p-4 shadow-2xl">
+            <div className="text-sm font-semibold mb-2">Command Palette</div>
+            <button
+              className="block w-full text-left p-2 hover:bg-gray-100 dark:hover:bg-gray-700 rounded"
+              onClick={() => {
+                localStorage.removeItem("msgs-none"); // ✅ clear old temp chat
+                fetch(API + "/api/chat", {
+                  method: "POST",
+                  headers: { "Content-Type": "application/json" },
+                  body: JSON.stringify({ messages: [] }),
+                })
+                  .then((r) => r.json())
+                  .then((d) => {
+                    if (d.conversationId) {
+                      setActive(d.conversationId);
+                      localStorage.setItem(
+                        "msgs-" + d.conversationId,
+                        JSON.stringify([])
+                      );
+                      setMessages([]);
+                    }
+                    fetch(API + "/api/conversations")
+                      .then((r) => r.json())
+                      .then(setConversations);
+                  });
+                setShowPalette(false);
+              }}>
+              Create new conversation
+            </button>
+            <button
+              className="block w-full text-left p-2 hover:bg-gray-100 dark:hover:bg-gray-700 rounded mt-2"
+              onClick={() => {
+                // toggle theme
+                setTheme((t) => (t === "light" ? "dark" : "light"));
+                setShowPalette(false);
+              }}>
+              Toggle theme
+            </button>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
