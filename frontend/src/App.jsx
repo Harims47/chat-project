@@ -114,7 +114,11 @@ export default function App() {
     const h = (e) => {
       if ((e.ctrlKey || e.metaKey) && e.key === "k") {
         e.preventDefault();
-        setShowPalette((s) => !s);
+        setShowPalette((prev) => {
+          const newVal = !prev;
+          if (!prev) setSearchTerm(""); // ✅ Clear search every time palette opens
+          return newVal;
+        });
       }
       if (e.key === "Escape") {
         setShowPalette(false);
