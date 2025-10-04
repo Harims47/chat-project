@@ -56,6 +56,25 @@ export default function App() {
   const manualScrollRef = useRef(false);
   const [search, setSearch] = useState("");
   const [searchQuery, setSearchQuery] = useState("");
+  const [sidebarOpen, setSidebarOpen] = useState(window.innerWidth >= 768);
+
+  useEffect(() => {
+    const setVh = () => {
+      const vh = window.innerHeight * 0.01;
+      document.documentElement.style.setProperty("--vh", `${vh}px`);
+    };
+    setVh();
+    window.addEventListener("resize", setVh);
+    return () => window.removeEventListener("resize", setVh);
+  }, []);
+
+  useEffect(() => {
+    const handleResize = () => {
+      setSidebarOpen(window.innerWidth >= 768);
+    };
+    window.addEventListener("resize", handleResize);
+    return () => window.removeEventListener("resize", handleResize);
+  }, []);
 
   useEffect(() => {
     document.documentElement.classList.toggle("dark", theme === "dark");
@@ -222,24 +241,74 @@ export default function App() {
     setStreaming(false);
   }
 
+  // Replace your existing send(...) with this
   async function send(manualRetry = false) {
-    if (!input.trim() && attachments.length === 0 && !manualRetry) return;
+    const hasText = !!input.trim();
+    const hasAttachments = attachments.length > 0;
+
+    // nothing to send
+    if (!hasText && !hasAttachments && !manualRetry) return;
+
+    // Always fallback for files — don't extract text
+    let content = input.trim();
+    if (!content && hasAttachments) {
+      content = `Uploaded file: ${attachments
+        .map((a) => a.filename || a.attachmentId)
+        .join(", ")}`;
+    }
+
+    // Create user message object
     const userMsg = {
       id: "u" + Date.now(),
       role: "user",
-      content: input,
+      content,
       ts: Date.now(),
       attachments: attachments.map((a) => a.attachmentId),
     };
+
+    // Add message locally and persist
     const nextMsgs = [...messages, userMsg];
     setMessages(nextMsgs);
 
     if (active) {
-      // ✅ Save immediately if chat already has ID
       localStorage.setItem("msgs-" + active, JSON.stringify(nextMsgs));
-    } else {
-      // 🚀 Wait for backend to assign new conversationId
-      fetch(API + "/api/chat", {
+    }
+
+    // Clear UI input and attachments after message created
+    setInput("");
+    setAttachments([]);
+
+    // If there's no active conversation, create one first
+    if (!active) {
+      try {
+        const r = await fetch(API + "/api/chat", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            conversationId: active,
+            messages: [userMsg],
+            attachments: userMsg.attachments,
+            systemPrompt,
+          }),
+        });
+        const data = await r.json();
+        if (data.conversationId) {
+          setActive(data.conversationId);
+          localStorage.setItem(
+            "msgs-" + data.conversationId,
+            JSON.stringify(nextMsgs)
+          );
+        }
+      } catch (err) {
+        console.error("Failed to create conversation:", err);
+      }
+      connectSSE(content || systemPrompt);
+      return;
+    }
+
+    // Continue existing chat
+    try {
+      const r = await fetch(API + "/api/chat", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
@@ -248,46 +317,19 @@ export default function App() {
           attachments: userMsg.attachments,
           systemPrompt,
         }),
-      })
-        .then((r) => r.json())
-        .then((data) => {
-          if (data.conversationId) {
-            setActive(data.conversationId);
-            localStorage.setItem(
-              "msgs-" + data.conversationId,
-              JSON.stringify(nextMsgs)
-            );
-          }
-        })
-        .catch(() => {});
-      // Start mock stream
-      connectSSE(userMsg.content || systemPrompt);
-      return;
+      });
+      const data = await r.json();
+      if (data.conversationId && !active) {
+        setActive(data.conversationId);
+      }
+    } catch (err) {
+      console.error("Failed to send chat:", err);
     }
 
-    setInput("");
-    setAttachments([]);
-    // inform backend
-    fetch(API + "/api/chat", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        conversationId: active,
-        messages: [userMsg],
-        attachments: userMsg.attachments,
-        systemPrompt,
-      }),
-    })
-      .then((r) => r.json())
-      .then((data) => {
-        if (data.conversationId && !active) {
-          setActive(data.conversationId);
-        }
-      })
-      .catch(() => {});
-    // connect SSE to stream assistant reply
-    connectSSE(userMsg.content || systemPrompt);
+    // Stream mock reply
+    connectSSE(content || systemPrompt);
   }
+
 
   function onFileChange(e) {
     const f = e.target.files[0];
@@ -368,55 +410,99 @@ export default function App() {
   }, [messages, active]);
 
   return (
-    <div className="h-screen flex bg-gray-50 dark:bg-gray-900 text-gray-900 dark:text-gray-100">
-      <aside className="w-80 border-r p-2 bg-white dark:bg-gray-800">
-        <div className="flex items-center justify-between mb-3">
-          <h2 className="text-lg font-bold">Chats</h2>
-          <div className="flex items-center gap-2">
-            <select
-              value={systemPrompt}
-              onChange={(e) => setSystemPrompt(e.target.value)}
-              className="text-sm p-1 rounded bg-gray-100 dark:bg-gray-700">
-              <option value="Default assistant behavior">Default</option>
-              <option value="Be concise and professional">Concise</option>
-              <option value="Be friendly and casual">Friendly</option>
-            </select>
+    <div className="h-screen flex flex-col md:flex-row bg-gray-50 dark:bg-gray-900 text-gray-900 dark:text-gray-100">
+      {sidebarOpen && (
+        <aside className="w-full md:w-80 border-r p-2 bg-white dark:bg-gray-800 absolute md:relative h-full md:h-auto z-20">
+          <div className="flex items-center justify-between mb-3">
+            <h2 className="text-lg font-bold">Chats</h2>
+            <div className="flex items-center gap-2">
+              <select
+                value={systemPrompt}
+                onChange={(e) => setSystemPrompt(e.target.value)}
+                className="text-sm p-1 rounded bg-gray-100 dark:bg-gray-700">
+                <option value="Default assistant behavior">Default</option>
+                <option value="Be concise and professional">Concise</option>
+                <option value="Be friendly and casual">Friendly</option>
+              </select>
+              <button
+                onClick={() =>
+                  setTheme((t) => (t === "light" ? "dark" : "light"))
+                }
+                title="Toggle theme"
+                className="px-2 py-1 rounded bg-gray-200 dark:bg-gray-700">
+                {theme === "light" ? "🌙" : "☀️"}
+              </button>
+            </div>
             <button
-              onClick={() =>
-                setTheme((t) => (t === "light" ? "dark" : "light"))
-              }
-              title="Toggle theme"
-              className="px-2 py-1 rounded bg-gray-200 dark:bg-gray-700">
-              {theme === "light" ? "🌙" : "☀️"}
+              className="md:hidden px-2 py-1 text-gray-500 dark:text-gray-300"
+              onClick={() => setSidebarOpen(false)}>
+              ✕
             </button>
           </div>
-        </div>
 
-        <div
-          className="space-y-2 overflow-auto"
-          style={{ maxHeight: "calc(100vh - 140px)" }}>
-          {conversations.map((c) => (
-            <div
-              key={c.id}
-              onClick={() => setActive(c.id)}
-              className={`p-2 rounded cursor-pointer ${
-                active === c.id
-                  ? "bg-gray-200 dark:bg-gray-700"
-                  : "hover:bg-gray-100 dark:hover:bg-gray-700"
-              }`}>
-              <div className="flex justify-between">
-                <div className="font-semibold">{c.title}</div>
-                <div className="text-xs text-gray-500">
-                  {c.ts ? new Date(c.ts).toLocaleTimeString() : ""}
+          <button
+            className="block w-full text-left p-2 hover:bg-gray-100 dark:hover:bg-gray-700 rounded mb-2"
+            onClick={() => {
+              fetch(API + "/api/chat", {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({ messages: [] }),
+              })
+                .then((r) => r.json())
+                .then((d) => {
+                  if (d.conversationId) {
+                    setActive(d.conversationId);
+                    localStorage.setItem(
+                      "msgs-" + d.conversationId,
+                      JSON.stringify([])
+                    );
+                    setMessages([]);
+                  }
+                  fetch(API + "/api/conversations")
+                    .then((r) => r.json())
+                    .then(setConversations);
+                });
+              setShowPalette(false);
+            }}>
+            ➕ Create new conversation
+          </button>
+
+          <div
+            className="space-y-2 overflow-auto"
+            style={{ maxHeight: "calc(100vh - 140px)" }}>
+            {conversations.map((c) => (
+              <div
+                key={c.id}
+                onClick={() => {
+                  setActive(c.id);
+                  if (window.innerWidth < 768) setSidebarOpen(false); // close sidebar after selecting chat
+                }}
+                className={`p-2 rounded cursor-pointer ${
+                  active === c.id
+                    ? "bg-gray-200 dark:bg-gray-700"
+                    : "hover:bg-gray-100 dark:hover:bg-gray-700"
+                }`}>
+                <div className="flex justify-between">
+                  <div className="font-semibold">{c.title}</div>
+                  <div className="text-xs text-gray-500">
+                    {c.ts ? new Date(c.ts).toLocaleTimeString() : ""}
+                  </div>
+                </div>
+                <div className="text-sm text-gray-600 dark:text-gray-400">
+                  {c.last}
                 </div>
               </div>
-              <div className="text-sm text-gray-600 dark:text-gray-400">
-                {c.last}
-              </div>
-            </div>
-          ))}
-        </div>
-      </aside>
+            ))}
+          </div>
+        </aside>
+      )}
+      {!sidebarOpen && (
+        <button
+          className="md:hidden fixed top-3 left-3 z-30 bg-gray-200 dark:bg-gray-700 text-gray-800 dark:text-gray-100 px-3 py-1 rounded"
+          onClick={() => setSidebarOpen(true)}>
+          ☰
+        </button>
+      )}
 
       <main className="flex-1 flex flex-col">
         <div className="flex-1 overflow-auto p-4" ref={scrollRef}>
@@ -444,7 +530,7 @@ export default function App() {
                   )}
                 </div>
               </div> */}
-              <div className="flex justify-between items-center mt-2 text-xs text-gray-500">
+              <div className="flex justify-between items-center mt-2 text-xs text-white-500">
                 <div>{formatTime(m.ts)}</div>
                 <div className="flex gap-3 items-center">
                   <button
@@ -477,7 +563,7 @@ export default function App() {
         </div>
 
         <div className="p-4 border-t bg-white dark:bg-gray-800">
-          <div className="flex gap-2 items-center mb-2">
+          {/* <div className="flex gap-2 items-center mb-2">
             {attachments.map((a) => (
               <div
                 key={a.attachmentId}
@@ -485,7 +571,27 @@ export default function App() {
                 {a.filename || a.attachmentId}
               </div>
             ))}
+          </div> */}
+          <div className="flex flex-wrap gap-2 items-center mb-2">
+            {attachments.map((a) => (
+              <div
+                key={a.attachmentId}
+                className="flex items-center gap-2 px-3 py-1 bg-gray-100 dark:bg-gray-700 rounded-full">
+                <span className="text-sm">{a.filename || a.attachmentId}</span>
+                <button
+                  onClick={() =>
+                    setAttachments((prev) =>
+                      prev.filter((x) => x.attachmentId !== a.attachmentId)
+                    )
+                  }
+                  className="text-gray-500 hover:text-red-500 transition-colors"
+                  title="Remove file">
+                  ✕
+                </button>
+              </div>
+            ))}
           </div>
+
           <textarea
             value={input}
             onChange={(e) => setInput(e.target.value)}
