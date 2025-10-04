@@ -124,6 +124,8 @@ export default function App() {
       const url = new URL(API + "/api/chat/sse");
       url.searchParams.set("conversationId", active || "");
       url.searchParams.set("prompt", prompt);
+      url.searchParams.set("systemPrompt", systemPrompt);
+
       const es = new EventSource(url.toString());
       sseRef.current = es;
 

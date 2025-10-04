@@ -112,6 +112,49 @@ app.post("/api/chat", (req, res) => {
 
 // SSE streaming endpoint: token-by-token mock using words split
 // SSE streaming endpoint: token-by-token mock using words split
+// app.get("/api/chat/sse", (req, res) => {
+//   res.set({
+//     "Content-Type": "text/event-stream",
+//     "Cache-Control": "no-cache",
+//     Connection: "keep-alive",
+//   });
+//   res.flushHeaders && res.flushHeaders();
+
+//   const convId = req.query.conversationId;
+//   const prompt = req.query.prompt || "";
+
+//   // Get tone from conversation meta if available
+//   const systemPrompt =
+//     meta[convId]?.systemPrompt || "Default assistant behavior";
+//   let toneSuffix = "";
+//   if (systemPrompt === "Be concise and professional") {
+//     toneSuffix = " (Concise tone)";
+//   } else if (systemPrompt === "Be friendly and casual") {
+//     toneSuffix = " 😊 (Friendly tone)";
+//   }
+
+//   // Decide reply text based on tone and prompt
+//   const replyText = prompt
+//     ? `Mocked streaming reply to: "${prompt}"${toneSuffix}`
+//     : `Hello! 👋 This is your new chat — how can I help?${toneSuffix}`;
+
+//   const content = replyText.split(" ");
+
+//   let i = 0;
+//   const iv = setInterval(() => {
+//     if (i >= content.length) {
+//       res.write("data: [DONE]\n\n");
+//       clearInterval(iv);
+//       res.end();
+//       return;
+//     }
+//     res.write("data: " + content[i] + "\n\n");
+//     i++;
+//   }, 140);
+
+//   req.on("close", () => clearInterval(iv));
+// });
+// SSE streaming endpoint: token-by-token mock using words split
 app.get("/api/chat/sse", (req, res) => {
   res.set({
     "Content-Type": "text/event-stream",
@@ -122,10 +165,9 @@ app.get("/api/chat/sse", (req, res) => {
 
   const convId = req.query.conversationId;
   const prompt = req.query.prompt || "";
+  const systemPrompt = req.query.systemPrompt || "Default assistant behavior";
 
-  // Get tone from conversation meta if available
-  const systemPrompt =
-    meta[convId]?.systemPrompt || "Default assistant behavior";
+  // Add tone suffix
   let toneSuffix = "";
   if (systemPrompt === "Be concise and professional") {
     toneSuffix = " (Concise tone)";
@@ -133,13 +175,11 @@ app.get("/api/chat/sse", (req, res) => {
     toneSuffix = " 😊 (Friendly tone)";
   }
 
-  // Decide reply text based on tone and prompt
   const replyText = prompt
     ? `Mocked streaming reply to: "${prompt}"${toneSuffix}`
-    : `Hello! 👋 This is your new chat — how can I help?${toneSuffix}`;
+    : "Hello! 👋 This is your new chat — how can I help?";
 
   const content = replyText.split(" ");
-
   let i = 0;
   const iv = setInterval(() => {
     if (i >= content.length) {
