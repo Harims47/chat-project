@@ -330,7 +330,6 @@ export default function App() {
     connectSSE(content || systemPrompt);
   }
 
-
   function onFileChange(e) {
     const f = e.target.files[0];
     if (!f) return;
@@ -409,6 +408,37 @@ export default function App() {
     });
   }, [messages, active]);
 
+  const handleNewConversation = async () => {
+    try {
+      const res = await fetch(API + "/api/chat", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ messages: [] }),
+      });
+      const data = await res.json();
+
+      if (data.conversationId) {
+        // ✅ Clear any previous active chat
+        setMessages([]);
+        setActive(data.conversationId);
+
+        // ✅ Store clean state locally
+        localStorage.setItem("msgs-" + data.conversationId, JSON.stringify([]));
+
+        // ✅ Fetch fresh list (so it appears instantly)
+        const updated = await fetch(API + "/api/conversations").then((r) =>
+          r.json()
+        );
+        setConversations(updated);
+      }
+    } catch (err) {
+      console.error("Error creating new conversation:", err);
+    } finally {
+      setShowPalette(false);
+      if (window.innerWidth < 768) setSidebarOpen(false); // close sidebar on mobile
+    }
+  };
+
   return (
     <div className="h-screen flex flex-col md:flex-row bg-gray-50 dark:bg-gray-900 text-gray-900 dark:text-gray-100">
       {sidebarOpen && (
@@ -442,28 +472,7 @@ export default function App() {
 
           <button
             className="block w-full text-left p-2 hover:bg-gray-100 dark:hover:bg-gray-700 rounded mb-2"
-            onClick={() => {
-              fetch(API + "/api/chat", {
-                method: "POST",
-                headers: { "Content-Type": "application/json" },
-                body: JSON.stringify({ messages: [] }),
-              })
-                .then((r) => r.json())
-                .then((d) => {
-                  if (d.conversationId) {
-                    setActive(d.conversationId);
-                    localStorage.setItem(
-                      "msgs-" + d.conversationId,
-                      JSON.stringify([])
-                    );
-                    setMessages([]);
-                  }
-                  fetch(API + "/api/conversations")
-                    .then((r) => r.json())
-                    .then(setConversations);
-                });
-              setShowPalette(false);
-            }}>
+            onClick={handleNewConversation}>
             ➕ Create new conversation
           </button>
 
@@ -685,28 +694,7 @@ export default function App() {
             {/* ⚙️ Commands */}
             <button
               className="block w-full text-left p-2 hover:bg-gray-100 dark:hover:bg-gray-700 rounded mb-2"
-              onClick={() => {
-                fetch(API + "/api/chat", {
-                  method: "POST",
-                  headers: { "Content-Type": "application/json" },
-                  body: JSON.stringify({ messages: [] }),
-                })
-                  .then((r) => r.json())
-                  .then((d) => {
-                    if (d.conversationId) {
-                      setActive(d.conversationId);
-                      localStorage.setItem(
-                        "msgs-" + d.conversationId,
-                        JSON.stringify([])
-                      );
-                      setMessages([]);
-                    }
-                    fetch(API + "/api/conversations")
-                      .then((r) => r.json())
-                      .then(setConversations);
-                  });
-                setShowPalette(false);
-              }}>
+              onClick={handleNewConversation}>
               ➕ Create new conversation
             </button>
 
