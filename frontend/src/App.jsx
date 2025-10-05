@@ -294,32 +294,59 @@ export default function App() {
     setAttachments([]);
 
     // If there's no active conversation, create one first
-    if (!active) {
-      try {
-        const r = await fetch(API + "/api/chat", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            conversationId: active,
-            messages: [userMsg],
-            attachments: userMsg.attachments,
-            systemPrompt,
-          }),
-        });
-        const data = await r.json();
-        if (data.conversationId) {
-          setActive(data.conversationId);
-          localStorage.setItem(
-            "msgs-" + data.conversationId,
-            JSON.stringify(nextMsgs)
-          );
-        }
-      } catch (err) {
-        console.error("Failed to create conversation:", err);
-      }
+    // if (!active) {
+    //   try {
+    //     const r = await fetch(API + "/api/chat", {
+    //       method: "POST",
+    //       headers: { "Content-Type": "application/json" },
+    //       body: JSON.stringify({
+    //         conversationId: active,
+    //         messages: [userMsg],
+    //         attachments: userMsg.attachments,
+    //         systemPrompt,
+    //       }),
+    //     });
+    //     const data = await r.json();
+    //     if (data.conversationId) {
+    //       setActive(data.conversationId);
+    //       localStorage.setItem(
+    //         "msgs-" + data.conversationId,
+    //         JSON.stringify(nextMsgs)
+    //       );
+    //     }
+    //   } catch (err) {
+    //     console.error("Failed to create conversation:", err);
+    //   }
+    //   connectSSE(content || systemPrompt);
+    //   return;
+    // }
+if (!active) {
+  try {
+    const r = await fetch(API + "/api/chat", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        conversationId: active,
+        messages: [userMsg],
+        attachments: userMsg.attachments,
+        systemPrompt,
+      }),
+    });
+    const data = await r.json();
+    if (data.conversationId) {
+      setActive(data.conversationId);
+      localStorage.setItem(
+        "msgs-" + data.conversationId,
+        JSON.stringify(nextMsgs)
+      );
+      // ✅ Start SSE *after* conversationId is set
       connectSSE(content || systemPrompt);
-      return;
     }
+  } catch (err) {
+    console.error("Failed to create conversation:", err);
+  }
+  return;
+}
 
     // Continue existing chat
     try {
