@@ -330,21 +330,34 @@ export default function App() {
     connectSSE(content || systemPrompt);
   }
 
-  function onFileChange(e) {
-    const f = e.target.files[0];
-    if (!f) return;
-    const form = new FormData();
-    form.append("file", f);
-    fetch(API + "/api/upload", { method: "POST", body: form })
-      .then((r) => r.json())
-      .then((data) => {
-        if (data.attachmentId) {
-          setAttachments((prev) => [...prev, data]);
-        }
-      })
-      .catch(() => {});
-    e.target.value = "";
-  }
+ function onFileChange(e) {
+   const f = e.target.files[0];
+   if (!f) return;
+
+   const validTypes = ["text/plain", "application/pdf"];
+   const validExts = [".txt", ".pdf"];
+
+   // Client-side validation
+   const ext = f.name.slice(f.name.lastIndexOf(".")).toLowerCase();
+   if (!validTypes.includes(f.type) && !validExts.includes(ext)) {
+     alert("Only .txt and .pdf files are allowed.");
+     e.target.value = "";
+     return;
+   }
+
+   const form = new FormData();
+   form.append("file", f);
+   fetch(API + "/api/upload", { method: "POST", body: form })
+     .then((r) => r.json())
+     .then((data) => {
+       if (data.attachmentId) {
+         setAttachments((prev) => [...prev, data]);
+       }
+     })
+     .catch(() => {});
+   e.target.value = "";
+ }
+
 
   function copyText(text) {
     navigator.clipboard.writeText(text);
