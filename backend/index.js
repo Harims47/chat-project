@@ -267,4 +267,10 @@ app.post("/api/upload", upload.single("file"), async (req, res) => {
   }
 });
 
+// 🔹 Development-only route to clear all stored chats
+app.post("/api/clear", (req, res) => {
+  for (const key in conversations) delete conversations[key];
+  res.json({ status: "✅ All in-memory conversations cleared." });
+});
+
 app.listen(PORT, () => console.log("Server listening on", PORT));
