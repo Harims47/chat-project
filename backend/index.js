@@ -168,18 +168,43 @@ app.get("/api/chat/sse", (req, res) => {
   const interval = setInterval(() => {
     if (i >= words.length) {
       // ✅ when stream ends, persist full assistant message
-      const reply = {
-        id: "a" + Date.now(),
-        role: "assistant",
-        content: streamed.trim(),
-        ts: Date.now(),
-      };
+      // const reply = {
+      //   id: "a" + Date.now(),
+      //   role: "assistant",
+      //   content: streamed.trim(),
+      //   ts: Date.now(),
+      // };
+      // conversations[userId] = conversations[userId] || {};
+      // conversations[userId][conversationId] =
+      //   conversations[userId][conversationId] || [];
+      // conversations[userId][conversationId].push(reply);
+
+      // console.log(`💾 Saved assistant reply for ${userId}/${conversationId}`);
       conversations[userId] = conversations[userId] || {};
       conversations[userId][conversationId] =
         conversations[userId][conversationId] || [];
-      conversations[userId][conversationId].push(reply);
 
-      console.log(`💾 Saved assistant reply for ${userId}/${conversationId}`);
+      // ✅ If last assistant message already exists for same user prompt, replace it
+      const lastMsg =
+        conversations[userId][conversationId][
+          conversations[userId][conversationId].length - 1
+        ];
+
+      if (lastMsg && lastMsg.role === "assistant") {
+        lastMsg.content = streamed.trim();
+        lastMsg.ts = Date.now();
+      } else {
+        conversations[userId][conversationId].push({
+          id: "a" + Date.now(),
+          role: "assistant",
+          content: streamed.trim(),
+          ts: Date.now(),
+        });
+      }
+
+      console.log(
+        `💾 Saved/Updated assistant reply for ${userId}/${conversationId}`
+      );
 
       res.write("data: [DONE]\n\n");
       clearInterval(interval);

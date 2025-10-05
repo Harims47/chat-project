@@ -192,56 +192,157 @@ export default function App() {
   }
 
   // ✅ SSE connection
-  function connectSSE(prompt) {
+  // function connectSSE(prompt, convId = active) {
+  //   if (sseRef.current) {
+  //     sseRef.current.close();
+  //     sseRef.current = null;
+  //     setStreaming(false);
+  //   }
+  //   setStreaming(true);
+  //   try {
+  //     const url = new URL(API + "/api/chat/sse");
+  //     //url.searchParams.set("conversationId", active || "");
+  //     url.searchParams.set("prompt", prompt);
+  //     url.searchParams.set("systemPrompt", systemPrompt);
+  //     // url.searchParams.set("userId", USER_ID);
+
+  //     url.searchParams.set("conversationId", convId || "");
+  //     url.searchParams.set("userId", USER_ID);
+
+  //     const es = new EventSource(url.toString());
+  //     sseRef.current = es;
+
+  //     const assistantId = "a" + Date.now();
+  //     setMessages((prev) => {
+  //       const next = [
+  //         ...prev,
+  //         { id: assistantId, role: "assistant", content: "", ts: Date.now() },
+  //       ];
+  //       localStorage.setItem(
+  //         "msgs-" + (active || "none"),
+  //         JSON.stringify(next)
+  //       );
+  //       return next;
+  //     });
+
+  //     es.onmessage = (ev) => {
+  //       if (ev.data === "[DONE]") {
+  //         setStreaming(false);
+  //         es.close();
+  //         sseRef.current = null;
+  //         return;
+  //       }
+  //       setMessages((prev) => {
+  //         const last = prev[prev.length - 1];
+  //         if (last && last.role === "assistant") {
+  //           const updated = { ...last, content: last.content + " " + ev.data };
+  //           const next = [...prev.slice(0, -1), updated];
+  //           localStorage.setItem(
+  //             "msgs-" + (active || "none"),
+  //             JSON.stringify(next)
+  //           );
+  //           return next;
+  //         }
+  //         return prev;
+  //       });
+  //       const el = scrollRef.current;
+  //       if (el && !manualScrollRef.current) el.scrollTop = el.scrollHeight;
+  //     };
+
+  //     es.onerror = () => {
+  //       setStreaming(false);
+  //       try {
+  //         es.close();
+  //       } catch {}
+  //       sseRef.current = null;
+  //     };
+  //   } catch {
+  //     const reply =
+  //       MOCK_REPLIES[Math.floor(Math.random() * MOCK_REPLIES.length)];
+  //     const mockMsg = {
+  //       id: "a" + Date.now(),
+  //       role: "assistant",
+  //       content: reply,
+  //       ts: Date.now(),
+  //     };
+  //     setMessages((prev) => {
+  //       const next = [...prev, mockMsg];
+  //       localStorage.setItem(
+  //         "msgs-" + (active || "none"),
+  //         JSON.stringify(next)
+  //       );
+  //       return next;
+  //     });
+  //     setStreaming(false);
+  //   }
+  // }
+  function connectSSE(prompt, convId) {
+    const conversationId = convId || active;
+    const userId = USER_ID;
+
+    if (!conversationId || !userId) {
+      console.warn("Missing conversationId or userId for SSE", {
+        conversationId,
+        userId,
+      });
+      return;
+    }
+
+    // Close existing SSE if any
     if (sseRef.current) {
-      sseRef.current.close();
+      try {
+        sseRef.current.close();
+      } catch {}
       sseRef.current = null;
       setStreaming(false);
     }
+
     setStreaming(true);
+
     try {
       const url = new URL(API + "/api/chat/sse");
-      url.searchParams.set("conversationId", active || "");
-      url.searchParams.set("prompt", prompt);
-      url.searchParams.set("systemPrompt", systemPrompt);
-      url.searchParams.set("userId", USER_ID);
+      url.searchParams.set("conversationId", conversationId);
+      url.searchParams.set("userId", userId);
+      url.searchParams.set("prompt", prompt || "");
+      url.searchParams.set("systemPrompt", systemPrompt || "");
 
       const es = new EventSource(url.toString());
       sseRef.current = es;
 
+      // placeholder assistant bubble
       const assistantId = "a" + Date.now();
       setMessages((prev) => {
         const next = [
           ...prev,
           { id: assistantId, role: "assistant", content: "", ts: Date.now() },
         ];
-        localStorage.setItem(
-          "msgs-" + (active || "none"),
-          JSON.stringify(next)
-        );
+        localStorage.setItem("msgs-" + conversationId, JSON.stringify(next));
         return next;
       });
 
       es.onmessage = (ev) => {
         if (ev.data === "[DONE]") {
           setStreaming(false);
-          es.close();
+          try {
+            es.close();
+          } catch {}
           sseRef.current = null;
           return;
         }
+
         setMessages((prev) => {
+          if (!prev.length) return prev;
           const last = prev[prev.length - 1];
-          if (last && last.role === "assistant") {
-            const updated = { ...last, content: last.content + " " + ev.data };
-            const next = [...prev.slice(0, -1), updated];
-            localStorage.setItem(
-              "msgs-" + (active || "none"),
-              JSON.stringify(next)
-            );
-            return next;
-          }
-          return prev;
+          if (!last || last.role !== "assistant") return prev;
+          const updated = {
+            ...last,
+            content: (last.content ? last.content + " " : "") + ev.data,
+          };
+          const next = [...prev.slice(0, -1), updated];
+          localStorage.setItem("msgs-" + conversationId, JSON.stringify(next));
+          return next;
         });
+
         const el = scrollRef.current;
         if (el && !manualScrollRef.current) el.scrollTop = el.scrollHeight;
       };
@@ -253,7 +354,8 @@ export default function App() {
         } catch {}
         sseRef.current = null;
       };
-    } catch {
+    } catch (err) {
+      // fallback if SSE fails
       const reply =
         MOCK_REPLIES[Math.floor(Math.random() * MOCK_REPLIES.length)];
       const mockMsg = {
@@ -265,7 +367,7 @@ export default function App() {
       setMessages((prev) => {
         const next = [...prev, mockMsg];
         localStorage.setItem(
-          "msgs-" + (active || "none"),
+          "msgs-" + (convId || active || "none"),
           JSON.stringify(next)
         );
         return next;
@@ -283,6 +385,111 @@ export default function App() {
   }
 
   // ✅ Send message
+  // async function send(manualRetry = false) {
+  //   const hasText = !!input.trim();
+  //   const hasAttachments = attachments.length > 0;
+  //   if (!hasText && !hasAttachments && !manualRetry) return;
+
+  //   let content = input.trim();
+  //   if (!content && hasAttachments) {
+  //     content = `Uploaded file: ${attachments
+  //       .map((a) => a.filename || a.attachmentId)
+  //       .join(", ")}`;
+  //   }
+
+  //   const userMsg = {
+  //     id: "u" + Date.now(),
+  //     role: "user",
+  //     content,
+  //     ts: Date.now(),
+  //     attachments: attachments.map((a) => a.attachmentId),
+  //   };
+
+  //   const nextMsgs = [...messages, userMsg];
+  //   setMessages(nextMsgs);
+
+  //   if (active)
+  //     localStorage.setItem("msgs-" + active, JSON.stringify(nextMsgs));
+
+  //   setInput("");
+  //   setAttachments([]);
+
+  //   // if (!active) {
+  //   //   try {
+  //   //     const r = await fetch(API + "/api/chat", {
+  //   //       method: "POST",
+  //   //       headers: { "Content-Type": "application/json" },
+  //   //       body: JSON.stringify({
+  //   //         userId: USER_ID,
+  //   //         messages: [userMsg],
+  //   //         systemPrompt,
+  //   //       }),
+  //   //     });
+  //   //     const data = await r.json();
+  //   //     if (data.conversationId) {
+  //   //       setActive(data.conversationId);
+  //   //       localStorage.setItem(
+  //   //         "msgs-" + data.conversationId,
+  //   //         JSON.stringify(nextMsgs)
+  //   //       );
+  //   //       connectSSE(content || systemPrompt);
+  //   //     }
+  //   //   } catch (err) {
+  //   //     console.error("Failed to create conversation:", err);
+  //   //   }
+  //   //   return;
+  //   // }
+  //   if (!active) {
+  //     try {
+  //       const r = await fetch(API + "/api/chat", {
+  //         method: "POST",
+  //         headers: { "Content-Type": "application/json" },
+  //         body: JSON.stringify({
+  //           userId: USER_ID,
+  //           conversationId: null,
+  //           messages: [userMsg],
+  //           attachments: userMsg.attachments,
+  //           systemPrompt,
+  //         }),
+  //       });
+  //       const data = await r.json();
+
+  //       if (data.conversationId) {
+  //         setActive(data.conversationId);
+
+  //         // ✅ Save locally
+  //         localStorage.setItem(
+  //           "msgs-" + data.conversationId,
+  //           JSON.stringify(nextMsgs)
+  //         );
+
+  //         // ✅ Start streaming reply only *after* we got valid conversationId
+  //         connectSSE(userMsg.content || systemPrompt);
+  //       }
+  //     } catch (err) {
+  //       console.error("Failed to create conversation:", err);
+  //     }
+  //     return;
+  //   }
+
+  //   try {
+  //     await fetch(API + "/api/chat", {
+  //       method: "POST",
+  //       headers: { "Content-Type": "application/json" },
+  //       body: JSON.stringify({
+  //         userId: USER_ID,
+  //         conversationId: active,
+  //         messages: [userMsg],
+  //         systemPrompt,
+  //       }),
+  //     });
+  //   } catch (err) {
+  //     console.error("Failed to send chat:", err);
+  //   }
+
+  //   connectSSE(content || systemPrompt);
+  // }
+
   async function send(manualRetry = false) {
     const hasText = !!input.trim();
     const hasAttachments = attachments.length > 0;
@@ -305,55 +512,58 @@ export default function App() {
 
     const nextMsgs = [...messages, userMsg];
     setMessages(nextMsgs);
-
-    if (active)
-      localStorage.setItem("msgs-" + active, JSON.stringify(nextMsgs));
-
     setInput("");
     setAttachments([]);
 
-    if (!active) {
+    // ✅ Case 1: Continue existing conversation
+    if (active) {
+      localStorage.setItem("msgs-" + active, JSON.stringify(nextMsgs));
       try {
-        const r = await fetch(API + "/api/chat", {
+        await fetch(API + "/api/chat", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({
             userId: USER_ID,
+            conversationId: active,
             messages: [userMsg],
+            attachments: userMsg.attachments,
             systemPrompt,
           }),
         });
-        const data = await r.json();
-        if (data.conversationId) {
-          setActive(data.conversationId);
-          localStorage.setItem(
-            "msgs-" + data.conversationId,
-            JSON.stringify(nextMsgs)
-          );
-          connectSSE(content || systemPrompt);
-        }
+        connectSSE(userMsg.content || systemPrompt, active);
       } catch (err) {
-        console.error("Failed to create conversation:", err);
+        console.error("Send failed:", err);
       }
       return;
     }
 
+    // ✅ Case 2: Start a new conversation
     try {
-      await fetch(API + "/api/chat", {
+      const r = await fetch(API + "/api/chat", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           userId: USER_ID,
-          conversationId: active,
           messages: [userMsg],
+          attachments: userMsg.attachments,
           systemPrompt,
         }),
       });
-    } catch (err) {
-      console.error("Failed to send chat:", err);
-    }
+      const data = await r.json();
 
-    connectSSE(content || systemPrompt);
+      if (data?.conversationId) {
+        const newId = data.conversationId;
+        setActive(newId);
+        localStorage.setItem("msgs-" + newId, JSON.stringify(nextMsgs));
+
+        // ✅ Important: Wait a moment before streaming
+        setTimeout(() => {
+          connectSSE(userMsg.content || systemPrompt, newId);
+        }, 150); // short delay ensures backend setup complete
+      }
+    } catch (err) {
+      console.error("Failed to create conversation:", err);
+    }
   }
 
   // ✅ File upload handler (.txt/.pdf only)
