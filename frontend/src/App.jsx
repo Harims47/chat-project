@@ -3,6 +3,16 @@ import { Copy, RefreshCcw } from "lucide-react";
 
 const API = import.meta.env.VITE_API_BASE || "http://localhost:4000";
 
+// ✅ Generate unique user ID once per browser
+if (!localStorage.getItem("userId")) {
+  localStorage.setItem(
+    "userId",
+    "u_" + Date.now() + "_" + Math.random().toString(36).slice(2)
+  );
+}
+const USER_ID = localStorage.getItem("userId");
+
+// ✅ Mock replies fallback
 const MOCK_REPLIES = [
   "Hello! 👋 This is a mock assistant reply.",
   "Sure, here’s a predefined answer from mock data.",
@@ -11,6 +21,7 @@ const MOCK_REPLIES = [
   "Mock reply: your system is working fine locally!",
 ];
 
+// ✅ Welcome prompts for new chats
 const WELCOME_MESSAGES = [
   "What’s on your mind today?",
   "Hey there 👋, what can I help you with today?",
@@ -55,9 +66,9 @@ export default function App() {
     "Default assistant behavior"
   );
   const [welcomeMsg, setWelcomeMsg] = useState("");
-
   const [attachments, setAttachments] = useState([]);
   const [searchTerm, setSearchTerm] = useState("");
+
   const filteredConversations = conversations
     .filter(
       (c) =>
@@ -69,8 +80,6 @@ export default function App() {
   const scrollRef = useRef();
   const sseRef = useRef(null);
   const manualScrollRef = useRef(false);
-  const [search, setSearch] = useState("");
-  const [searchQuery, setSearchQuery] = useState("");
   const [sidebarOpen, setSidebarOpen] = useState(window.innerWidth >= 768);
 
   useEffect(() => {
@@ -95,42 +104,36 @@ export default function App() {
     document.documentElement.classList.toggle("dark", theme === "dark");
   }, [theme]);
 
-  // Fetch conversations on load
+  // ✅ Fetch conversations for this user
   useEffect(() => {
-    fetch(API + "/api/conversations")
+    fetch(API + "/api/conversations?userId=" + USER_ID)
       .then((r) => r.json())
       .then(setConversations)
       .catch(() => setConversations([]));
   }, []);
 
-  // Load active messages if active set changed
-  // Load active messages from backend when a conversation is opened
+  // ✅ Load messages when conversation changes
   useEffect(() => {
     if (!active) return;
     const stored = JSON.parse(localStorage.getItem("msgs-" + active));
     if (stored) setMessages(stored);
     else setMessages([]);
 
-    // ✅ Auto-scroll to bottom always on chat switch
     requestAnimationFrame(() => {
       const el = scrollRef.current;
       if (el) el.scrollTop = el.scrollHeight;
     });
 
-    fetch(API + "/api/conversations/" + active)
+    fetch(API + "/api/conversations/" + active + "?userId=" + USER_ID)
       .then((r) => r.json())
       .then((data) => {
         setMessages(data);
-        // persist locally for quick reload
         localStorage.setItem("msgs-" + active, JSON.stringify(data));
       })
-      .catch((err) => {
-        console.error("Error loading chat:", err);
-        setMessages([]);
-      });
+      .catch(() => setMessages([]));
   }, [active]);
 
-  // persist scroll position per conversation
+  // ✅ Scroll persistence
   useEffect(() => {
     const el = scrollRef.current;
     if (!el) return;
@@ -143,14 +146,14 @@ export default function App() {
     return () => el.removeEventListener("scroll", handler);
   }, [active]);
 
-  // keyboard shortcuts
+  // ✅ Keyboard shortcuts
   useEffect(() => {
     const h = (e) => {
       if ((e.ctrlKey || e.metaKey) && e.key === "k") {
         e.preventDefault();
         setShowPalette((prev) => {
           const newVal = !prev;
-          if (!prev) setSearchTerm(""); // ✅ Clear search every time palette opens
+          if (!prev) setSearchTerm("");
           return newVal;
         });
       }
@@ -163,6 +166,32 @@ export default function App() {
     return () => window.removeEventListener("keydown", h);
   }, []);
 
+  function retry(msg) {
+    const idx = messages.findIndex((m) => m.id === msg.id);
+    if (idx > 0) {
+      // Find previous user message before this assistant reply
+      const prevUserMsg = [...messages]
+        .slice(0, idx)
+        .reverse()
+        .find((m) => m.role === "user");
+
+      if (prevUserMsg) {
+        // Remove only the assistant message being retried
+        const updatedMsgs = messages.filter((m) => m.id !== msg.id);
+        setMessages(updatedMsgs);
+        localStorage.setItem(
+          "msgs-" + (active || "none"),
+          JSON.stringify(updatedMsgs)
+        );
+
+        // Start retry streaming immediately (no stuck text)
+        setStreaming(true);
+        connectSSE(prevUserMsg.content || systemPrompt);
+      }
+    }
+  }
+
+  // ✅ SSE connection
   function connectSSE(prompt) {
     if (sseRef.current) {
       sseRef.current.close();
@@ -175,11 +204,11 @@ export default function App() {
       url.searchParams.set("conversationId", active || "");
       url.searchParams.set("prompt", prompt);
       url.searchParams.set("systemPrompt", systemPrompt);
+      url.searchParams.set("userId", USER_ID);
 
       const es = new EventSource(url.toString());
       sseRef.current = es;
 
-      // placeholder assistant message
       const assistantId = "a" + Date.now();
       setMessages((prev) => {
         const next = [
@@ -214,9 +243,7 @@ export default function App() {
           return prev;
         });
         const el = scrollRef.current;
-        if (el && !manualScrollRef.current) {
-          el.scrollTop = el.scrollHeight;
-        }
+        if (el && !manualScrollRef.current) el.scrollTop = el.scrollHeight;
       };
 
       es.onerror = () => {
@@ -226,8 +253,7 @@ export default function App() {
         } catch {}
         sseRef.current = null;
       };
-    } catch (err) {
-      // 🔹 If backend SSE fails, fallback mock reply
+    } catch {
       const reply =
         MOCK_REPLIES[Math.floor(Math.random() * MOCK_REPLIES.length)];
       const mockMsg = {
@@ -256,15 +282,12 @@ export default function App() {
     setStreaming(false);
   }
 
-  // Replace your existing send(...) with this
+  // ✅ Send message
   async function send(manualRetry = false) {
     const hasText = !!input.trim();
     const hasAttachments = attachments.length > 0;
-
-    // nothing to send
     if (!hasText && !hasAttachments && !manualRetry) return;
 
-    // Always fallback for files — don't extract text
     let content = input.trim();
     if (!content && hasAttachments) {
       content = `Uploaded file: ${attachments
@@ -272,7 +295,6 @@ export default function App() {
         .join(", ")}`;
     }
 
-    // Create user message object
     const userMsg = {
       id: "u" + Date.now(),
       role: "user",
@@ -281,105 +303,66 @@ export default function App() {
       attachments: attachments.map((a) => a.attachmentId),
     };
 
-    // Add message locally and persist
     const nextMsgs = [...messages, userMsg];
     setMessages(nextMsgs);
 
-    if (active) {
+    if (active)
       localStorage.setItem("msgs-" + active, JSON.stringify(nextMsgs));
-    }
 
-    // Clear UI input and attachments after message created
     setInput("");
     setAttachments([]);
 
-    // If there's no active conversation, create one first
-    // if (!active) {
-    //   try {
-    //     const r = await fetch(API + "/api/chat", {
-    //       method: "POST",
-    //       headers: { "Content-Type": "application/json" },
-    //       body: JSON.stringify({
-    //         conversationId: active,
-    //         messages: [userMsg],
-    //         attachments: userMsg.attachments,
-    //         systemPrompt,
-    //       }),
-    //     });
-    //     const data = await r.json();
-    //     if (data.conversationId) {
-    //       setActive(data.conversationId);
-    //       localStorage.setItem(
-    //         "msgs-" + data.conversationId,
-    //         JSON.stringify(nextMsgs)
-    //       );
-    //     }
-    //   } catch (err) {
-    //     console.error("Failed to create conversation:", err);
-    //   }
-    //   connectSSE(content || systemPrompt);
-    //   return;
-    // }
-if (!active) {
-  try {
-    const r = await fetch(API + "/api/chat", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        conversationId: active,
-        messages: [userMsg],
-        attachments: userMsg.attachments,
-        systemPrompt,
-      }),
-    });
-    const data = await r.json();
-    if (data.conversationId) {
-      setActive(data.conversationId);
-      localStorage.setItem(
-        "msgs-" + data.conversationId,
-        JSON.stringify(nextMsgs)
-      );
-      // ✅ Start SSE *after* conversationId is set
-      connectSSE(content || systemPrompt);
+    if (!active) {
+      try {
+        const r = await fetch(API + "/api/chat", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            userId: USER_ID,
+            messages: [userMsg],
+            systemPrompt,
+          }),
+        });
+        const data = await r.json();
+        if (data.conversationId) {
+          setActive(data.conversationId);
+          localStorage.setItem(
+            "msgs-" + data.conversationId,
+            JSON.stringify(nextMsgs)
+          );
+          connectSSE(content || systemPrompt);
+        }
+      } catch (err) {
+        console.error("Failed to create conversation:", err);
+      }
+      return;
     }
-  } catch (err) {
-    console.error("Failed to create conversation:", err);
-  }
-  return;
-}
 
-    // Continue existing chat
     try {
-      const r = await fetch(API + "/api/chat", {
+      await fetch(API + "/api/chat", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
+          userId: USER_ID,
           conversationId: active,
           messages: [userMsg],
-          attachments: userMsg.attachments,
           systemPrompt,
         }),
       });
-      const data = await r.json();
-      if (data.conversationId && !active) {
-        setActive(data.conversationId);
-      }
     } catch (err) {
       console.error("Failed to send chat:", err);
     }
 
-    // Stream mock reply
     connectSSE(content || systemPrompt);
   }
 
+  // ✅ File upload handler (.txt/.pdf only)
   function onFileChange(e) {
     const f = e.target.files[0];
     if (!f) return;
 
     const validTypes = ["text/plain", "application/pdf"];
     const validExts = [".txt", ".pdf"];
-
-    // Client-side validation
     const ext = f.name.slice(f.name.lastIndexOf(".")).toLowerCase();
     if (!validTypes.includes(f.type) && !validExts.includes(ext)) {
       alert("Only .txt and .pdf files are allowed.");
@@ -400,128 +383,42 @@ if (!active) {
     e.target.value = "";
   }
 
-  function copyText(text) {
-    navigator.clipboard.writeText(text);
-  }
-
-  function retry(msg) {
-    const idx = messages.findIndex((m) => m.id === msg.id);
-    if (idx > 0) {
-      // Find previous user message before this assistant reply
-      const prevUserMsg = [...messages]
-        .slice(0, idx)
-        .reverse()
-        .find((m) => m.role === "user");
-
-      if (prevUserMsg) {
-        // Remove only the assistant message being retried
-        const updatedMsgs = messages.filter((m) => m.id !== msg.id);
-        setMessages(updatedMsgs);
-        localStorage.setItem(
-          "msgs-" + (active || "none"),
-          JSON.stringify(updatedMsgs)
-        );
-
-        // Start retry streaming immediately (no stuck text)
-        setStreaming(true);
-        connectSSE(prevUserMsg.content || systemPrompt);
-      }
-    }
-  }
-
-  async function setTitleManual(id, title) {
-    await fetch(API + "/api/conversations/" + id + "/title", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ title }),
-    });
-    // refresh list
-    fetch(API + "/api/conversations")
-      .then((r) => r.json())
-      .then(setConversations);
-  }
-
-  // when messages change, update conversations list preview
-  useEffect(() => {
-    if (!active) return;
-    const last = messages[messages.length - 1];
-    setConversations((prev) => {
-      const idx = prev.findIndex((c) => c.id === active);
-      const entry = {
-        id: active,
-        title: prev[idx]?.title || "Conversation",
-        last: last?.content?.slice(0, 60),
-        ts: last?.ts || Date.now(),
-      };
-      if (idx >= 0) {
-        const copy = [...prev];
-        copy[idx] = entry;
-        return copy;
-      }
-      return [entry, ...prev];
-    });
-  }, [messages, active]);
-
+  // ✅ Create new chat
   const handleNewConversation = async () => {
     try {
       const res = await fetch(API + "/api/chat", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ messages: [] }),
+        body: JSON.stringify({
+          userId: USER_ID,
+          messages: [],
+        }),
       });
       const data = await res.json();
-
       if (data.conversationId) {
-        // ✅ Clear any previous active chat
         setMessages([]);
-        setWelcomeMsg(getWelcomeMessage());
-
-        setActive(data.conversationId);
-
-        // ✅ Store clean state locally
-        localStorage.setItem("msgs-" + data.conversationId, JSON.stringify([]));
-
-        // ✅ Fetch fresh list (so it appears instantly)
-        const updated = await fetch(API + "/api/conversations").then((r) =>
-          r.json()
+        setWelcomeMsg(
+          WELCOME_MESSAGES[Math.floor(Math.random() * WELCOME_MESSAGES.length)]
         );
+        setActive(data.conversationId);
+        localStorage.setItem("msgs-" + data.conversationId, JSON.stringify([]));
+        const updated = await fetch(
+          API + "/api/conversations?userId=" + USER_ID
+        ).then((r) => r.json());
         setConversations(updated);
       }
     } catch (err) {
       console.error("Error creating new conversation:", err);
     } finally {
       setShowPalette(false);
-      if (window.innerWidth < 768) setSidebarOpen(false); // close sidebar on mobile
+      if (window.innerWidth < 768) setSidebarOpen(false);
     }
   };
 
-  function getWelcomeMessage() {
-    const hour = new Date().getHours();
-    let timeGreeting = "";
-
-    if (hour < 12) timeGreeting = "Good morning ☀️";
-    else if (hour < 18) timeGreeting = "Good afternoon 🌤️";
-    else timeGreeting = "Good evening 🌙";
-
-    const randomIntros = [
-      "What’s on your mind today?",
-      "How can I help you today?",
-      "Got a question or idea? Let’s talk!",
-      "Ready to brainstorm something awesome?",
-      "Let’s make something amazing together!",
-      "Need help or just exploring? I’m all ears 👂",
-      "Start typing below to begin your chat 💬",
-      "Excited to chat with you — what shall we do today?",
-      "Your thoughts, my words — what’s next?",
-      "Ready when you are 😊",
-    ];
-
-    const intro = randomIntros[Math.floor(Math.random() * randomIntros.length)];
-    return `${timeGreeting}! ${intro}`;
-  }
-
+  // ✅ UI rendering
   return (
     <div className="h-screen flex flex-col md:flex-row bg-gray-50 dark:bg-gray-900 text-gray-900 dark:text-gray-100">
+      {/* SIDEBAR */}
       {sidebarOpen && (
         <aside className="w-full md:w-80 border-r p-2 bg-white dark:bg-gray-800 absolute md:relative h-full md:h-auto z-20">
           <div className="flex items-center justify-between mb-3">
@@ -565,7 +462,7 @@ if (!active) {
                 key={c.id}
                 onClick={() => {
                   setActive(c.id);
-                  if (window.innerWidth < 768) setSidebarOpen(false); // close sidebar after selecting chat
+                  if (window.innerWidth < 768) setSidebarOpen(false);
                 }}
                 className={`p-2 rounded cursor-pointer ${
                   active === c.id
@@ -594,10 +491,11 @@ if (!active) {
         </button>
       )}
 
+      {/* MAIN CHAT AREA */}
       <main className="flex-1 flex flex-col">
         <div className="flex-1 overflow-auto p-4" ref={scrollRef}>
           {messages.length === 0 ? (
-            <div className="flex flex-col items-center justify-center h-full text-center text-gray-500 dark:text-gray-400 animate-fade-in">
+            <div className="flex flex-col items-center justify-center h-full text-center text-gray-500 dark:text-gray-400">
               <div className="text-lg font-medium mb-2">
                 {welcomeMsg || "What’s on your mind today?"}
               </div>
@@ -619,7 +517,7 @@ if (!active) {
                   <div>{formatTime(m.ts)}</div>
                   <div className="flex gap-3 items-center">
                     <button
-                      onClick={() => copyText(m.content)}
+                      onClick={() => navigator.clipboard.writeText(m.content)}
                       title="Copy message"
                       className="text-white hover:text-blue-500 transition-colors">
                       <Copy size={14} />
@@ -637,6 +535,7 @@ if (!active) {
               </div>
             ))
           )}
+
           {streaming && (
             <div className="italic text-sm">
               Assistant is typing...{" "}
@@ -647,16 +546,8 @@ if (!active) {
           )}
         </div>
 
+        {/* Composer */}
         <div className="p-4 border-t bg-white dark:bg-gray-800">
-          {/* <div className="flex gap-2 items-center mb-2">
-            {attachments.map((a) => (
-              <div
-                key={a.attachmentId}
-                className="px-2 py-1 bg-gray-100 dark:bg-gray-700 rounded">
-                {a.filename || a.attachmentId}
-              </div>
-            ))}
-          </div> */}
           <div className="flex flex-wrap gap-2 items-center mb-2">
             {attachments.map((a) => (
               <div
@@ -690,6 +581,7 @@ if (!active) {
             className="w-full p-2 rounded resize-none bg-gray-50 dark:bg-gray-900"
             placeholder="Type a message (Enter to send, Shift+Enter newline)"
           />
+
           <div className="mt-2 flex justify-between items-center">
             <div className="flex items-center gap-2">
               <label className="px-2 py-1 border rounded cursor-pointer bg-gray-100 dark:bg-gray-700">
@@ -713,6 +605,7 @@ if (!active) {
           </div>
         </div>
       </main>
+
       {showPalette && (
         <div
           className="fixed inset-0 flex items-start justify-center pt-24 bg-black/40"
@@ -785,58 +678,6 @@ if (!active) {
           </div>
         </div>
       )}
-
-      {/* {showPalette && (
-        <div className="fixed inset-0 flex items-start justify-center pt-24">
-          <div className="bg-white dark:bg-gray-800 border rounded w-96 p-4 shadow-2xl">
-            <div className="flex justify-between items-center mb-3">
-              <div className="text-sm font-semibold">Command Palette</div>
-              <button
-                onClick={() => setShowPalette(false)}
-                className="text-gray-500 hover:text-gray-800 dark:hover:text-white text-lg font-bold"
-                title="Close">
-                ×
-              </button>
-            </div>
-            <button
-              className="block w-full text-left p-2 hover:bg-gray-100 dark:hover:bg-gray-700 rounded"
-              onClick={() => {
-                localStorage.removeItem("msgs-none"); // ✅ clear old temp chat
-                fetch(API + "/api/chat", {
-                  method: "POST",
-                  headers: { "Content-Type": "application/json" },
-                  body: JSON.stringify({ messages: [] }),
-                })
-                  .then((r) => r.json())
-                  .then((d) => {
-                    if (d.conversationId) {
-                      setActive(d.conversationId);
-                      localStorage.setItem(
-                        "msgs-" + d.conversationId,
-                        JSON.stringify([])
-                      );
-                      setMessages([]);
-                    }
-                    fetch(API + "/api/conversations")
-                      .then((r) => r.json())
-                      .then(setConversations);
-                  });
-                setShowPalette(false);
-              }}>
-              Create new conversation
-            </button>
-            <button
-              className="block w-full text-left p-2 hover:bg-gray-100 dark:hover:bg-gray-700 rounded mt-2"
-              onClick={() => {
-                // toggle theme
-                setTheme((t) => (t === "light" ? "dark" : "light"));
-                setShowPalette(false);
-              }}>
-              Toggle theme
-            </button>
-          </div>
-        </div>
-      )} */}
     </div>
   );
 }

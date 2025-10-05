@@ -3,274 +3,289 @@ const cors = require("cors");
 const multer = require("multer");
 const fs = require("fs");
 const pdf = require("pdf-parse");
-const upload = multer({ dest: "uploads/" });
+
 const app = express();
+const upload = multer({ dest: "uploads/" });
+
 app.use(cors());
 app.use(express.json());
 
 const PORT = process.env.PORT || 4000;
 
-// In-memory store
-const conversations = {}; // id -> messages array
-const meta = {}; // id -> { title }
+// ✅ In-memory store structured per user
+// conversations[userId] = { conversationId: [messages] }
+const conversations = {};
+const meta = {}; // meta[userId][conversationId] = { title, systemPrompt }
 
-// Helper to auto-generate title
-// Helper to auto-generate title
+// ✅ Helper: Generate smart auto-title from messages
 function autoTitleFromMessages(msgs) {
   const firstUser = msgs.find((m) => m.role === "user");
   if (!firstUser || !firstUser.content.trim()) return "New Chat";
 
   const text = firstUser.content.toLowerCase();
 
-  // Keyword-based auto title generator
   if (text.includes("hello") || text.includes("hi") || text.includes("hey"))
     return "Casual Greeting";
-
-  if (text.includes("joke") || text.includes("funny")) return "Fun Chat";
-
   if (text.includes("react") || text.includes(".net") || text.includes("api"))
     return "Technical Discussion";
+  if (text.includes("travel") || text.includes("trip"))
+    return "Travel Planning";
+  if (text.includes("music") || text.includes("movie"))
+    return "Entertainment Chat";
+  if (text.includes("plan") || text.includes("task")) return "Work Planning";
 
-  if (text.includes("travel") || text.includes("trip") || text.includes("goa"))
-    return "Trip Planning";
-
-  if (text.includes("movie") || text.includes("music") || text.includes("song"))
-    return "Entertainment Talk";
-
-  if (
-    text.includes("plan") ||
-    text.includes("project") ||
-    text.includes("task")
-  )
-    return "Work Planning";
-
-  if (text.includes("weather")) return "Weather Chat";
-
-  // Default fallback — make it generic but nicer
   const capitalized = text.split(" ").slice(0, 3).join(" ");
   return capitalized.charAt(0).toUpperCase() + capitalized.slice(1) + " Chat";
 }
 
-// POST /api/chat: start/continue
-// POST /api/chat: start/continue
-// POST /api/chat: start/continue
-// POST /api/chat: start/continue
+/* =====================================================
+   📩 POST /api/chat → Create or Continue Conversation
+===================================================== */
 app.post("/api/chat", (req, res) => {
   const {
+    userId,
     conversationId,
-    messages: incoming,
-    attachments,
+    messages: incoming = [],
     systemPrompt,
   } = req.body;
+
+  if (!userId) return res.status(400).json({ error: "Missing userId" });
+
+  // ensure user store exists
+  if (!conversations[userId]) {
+    conversations[userId] = {};
+    meta[userId] = {};
+  }
+
   const id = conversationId || "c_" + Date.now();
+  conversations[userId][id] = conversations[userId][id] || [];
 
-  conversations[id] = conversations[id] || [];
   if (Array.isArray(incoming) && incoming.length)
-    conversations[id].push(...incoming);
+    conversations[userId][id].push(...incoming);
 
-  // Apply tone based on systemPrompt
+  // apply tone to mock reply
   let toneSuffix = "";
-  if (systemPrompt === "Be concise and professional") {
+  if (systemPrompt === "Be concise and professional")
     toneSuffix = " (Concise tone)";
-  } else if (systemPrompt === "Be friendly and casual") {
+  else if (systemPrompt === "Be friendly and casual")
     toneSuffix = " 😊 (Friendly tone)";
-  }
 
-  // Create mock reply only if user message exists
-  const lastUserMsg =
-    incoming && incoming.length ? incoming[incoming.length - 1].content : "";
-  if (lastUserMsg.trim()) {
-    const reply = {
-      id: "a" + Date.now(),
-      role: "assistant",
-      content: `Mock reply for "${lastUserMsg}"${toneSuffix}`,
-      ts: Date.now(),
-    };
-    conversations[id].push(reply);
-  }
+  // mock assistant reply
+  const lastUserMsg = incoming.at(-1)?.content || "";
+  // if (lastUserMsg.trim()) {
+  //   const reply = {
+  //     id: "a" + Date.now(),
+  //     role: "assistant",
+  //     content: `Mocked streaming reply to: "${lastUserMsg}"${toneSuffix}`,
+  //     ts: Date.now(),
+  //   };
+  //   conversations[userId][id].push(reply);
+  // }
 
-  // Auto-generate meaningful title
-  meta[id] = meta[id] || {};
-  meta[id].systemPrompt = systemPrompt;
-  const titleBefore = meta[id].title;
-  const newTitle = autoTitleFromMessages(conversations[id]);
-
-  // Only set or update if it's a "New Chat" or still generic
-  if (
-    !titleBefore ||
-    titleBefore === "New Chat" ||
-    titleBefore.startsWith("Conversation")
-  ) {
-    meta[id].title = newTitle;
-  }
+  // store meta info
+  meta[userId][id] = meta[userId][id] || {};
+  meta[userId][id].systemPrompt = systemPrompt;
+  const newTitle = autoTitleFromMessages(conversations[userId][id]);
+  if (!meta[userId][id].title || meta[userId][id].title.startsWith("New"))
+    meta[userId][id].title = newTitle;
 
   res.json({
     conversationId: id,
-    messages: conversations[id],
+    messages: conversations[userId][id],
   });
 });
 
-// SSE streaming endpoint: token-by-token mock using words split
-// SSE streaming endpoint: token-by-token mock using words split
+/* =====================================================
+   🔄 SSE: Stream Mock Reply (token-by-token)
+===================================================== */
 // app.get("/api/chat/sse", (req, res) => {
 //   res.set({
 //     "Content-Type": "text/event-stream",
 //     "Cache-Control": "no-cache",
 //     Connection: "keep-alive",
 //   });
-//   res.flushHeaders && res.flushHeaders();
+//   res.flushHeaders?.();
 
 //   const convId = req.query.conversationId;
 //   const prompt = req.query.prompt || "";
+//   const systemPrompt = req.query.systemPrompt || "Default assistant behavior";
 
-//   // Get tone from conversation meta if available
-//   const systemPrompt =
-//     meta[convId]?.systemPrompt || "Default assistant behavior";
 //   let toneSuffix = "";
-//   if (systemPrompt === "Be concise and professional") {
+//   if (systemPrompt === "Be concise and professional")
 //     toneSuffix = " (Concise tone)";
-//   } else if (systemPrompt === "Be friendly and casual") {
+//   else if (systemPrompt === "Be friendly and casual")
 //     toneSuffix = " 😊 (Friendly tone)";
-//   }
 
-//   // Decide reply text based on tone and prompt
 //   const replyText = prompt
 //     ? `Mocked streaming reply to: "${prompt}"${toneSuffix}`
-//     : `Hello! 👋 This is your new chat — how can I help?${toneSuffix}`;
+//     : "Hello! 👋 This is your new chat — how can I help?";
 
-//   const content = replyText.split(" ");
-
+//   const tokens = replyText.split(" ");
 //   let i = 0;
-//   const iv = setInterval(() => {
-//     if (i >= content.length) {
+//   const stream = setInterval(() => {
+//     if (i >= tokens.length) {
 //       res.write("data: [DONE]\n\n");
-//       clearInterval(iv);
+//       clearInterval(stream);
 //       res.end();
 //       return;
 //     }
-//     res.write("data: " + content[i] + "\n\n");
+//     res.write(`data: ${tokens[i]}\n\n`);
 //     i++;
-//   }, 140);
+//   }, 120);
 
-//   req.on("close", () => clearInterval(iv));
+//   req.on("close", () => clearInterval(stream));
 // });
-// SSE streaming endpoint: token-by-token mock using words split
+
 app.get("/api/chat/sse", (req, res) => {
   res.set({
     "Content-Type": "text/event-stream",
     "Cache-Control": "no-cache",
     Connection: "keep-alive",
   });
-  res.flushHeaders && res.flushHeaders();
+  res.flushHeaders?.();
 
-  const convId = req.query.conversationId;
-  const prompt = req.query.prompt || "";
-  const systemPrompt = req.query.systemPrompt || "Default assistant behavior";
-
-  // Add tone suffix
-  let toneSuffix = "";
-  if (systemPrompt === "Be concise and professional") {
-    toneSuffix = " (Concise tone)";
-  } else if (systemPrompt === "Be friendly and casual") {
-    toneSuffix = " 😊 (Friendly tone)";
+  const { conversationId, userId, prompt = "", systemPrompt } = req.query;
+  if (!userId || !conversationId) {
+    res.write("data: [ERROR] Missing userId or conversationId\n\n");
+    return res.end();
   }
+
+  const toneSuffix =
+    systemPrompt === "Be concise and professional"
+      ? " (Concise tone)"
+      : systemPrompt === "Be friendly and casual"
+      ? " 😊 (Friendly tone)"
+      : "";
 
   const replyText = prompt
     ? `Mocked streaming reply to: "${prompt}"${toneSuffix}`
     : "Hello! 👋 This is your new chat — how can I help?";
 
-  const content = replyText.split(" ");
+  const words = replyText.split(" ");
+  let streamed = "";
   let i = 0;
-  const iv = setInterval(() => {
-    if (i >= content.length) {
+
+  const interval = setInterval(() => {
+    if (i >= words.length) {
+      // ✅ when stream ends, persist full assistant message
+      const reply = {
+        id: "a" + Date.now(),
+        role: "assistant",
+        content: streamed.trim(),
+        ts: Date.now(),
+      };
+      conversations[userId] = conversations[userId] || {};
+      conversations[userId][conversationId] =
+        conversations[userId][conversationId] || [];
+      conversations[userId][conversationId].push(reply);
+
+      console.log(`💾 Saved assistant reply for ${userId}/${conversationId}`);
+
       res.write("data: [DONE]\n\n");
-      clearInterval(iv);
+      clearInterval(interval);
       res.end();
       return;
     }
-    res.write("data: " + content[i] + "\n\n");
-    i++;
-  }, 140);
 
-  req.on("close", () => clearInterval(iv));
+    streamed += " " + words[i];
+    res.write(`data: ${words[i]}\n\n`);
+    i++;
+  }, 120);
+
+  req.on("close", () => clearInterval(interval));
 });
 
-// Conversations list
+/* =====================================================
+   📜 GET /api/conversations → List User Conversations
+===================================================== */
 app.get("/api/conversations", (req, res) => {
-  const list = Object.keys(conversations)
+  const userId = req.query.userId;
+  if (!userId || !conversations[userId]) return res.json([]);
+
+  const list = Object.keys(conversations[userId])
     .map((id) => {
-      const msgs = conversations[id] || [];
-      const last = msgs.slice(-1)[0];
+      const msgs = conversations[userId][id] || [];
+      const last = msgs.at(-1);
       return {
         id,
-        title: meta[id]?.title || "Conversation " + id,
+        title: meta[userId][id]?.title || "Conversation",
         last: last ? last.content.slice(0, 60) : "",
         ts: last ? last.ts : null,
       };
     })
     .sort((a, b) => (b.ts || 0) - (a.ts || 0));
+
   res.json(list);
 });
 
-// Fetch conversation
+/* =====================================================
+   💬 GET /api/conversations/:id → Fetch Messages
+===================================================== */
 app.get("/api/conversations/:id", (req, res) => {
-  res.json(conversations[req.params.id] || []);
+  const { userId } = req.query;
+  const { id } = req.params;
+
+  if (!userId || !conversations[userId]) return res.json([]);
+  res.json(conversations[userId][id] || []);
 });
 
-// Set/generate title
+/* =====================================================
+   🏷️ POST /api/conversations/:id/title → Update Title
+===================================================== */
 app.post("/api/conversations/:id/title", (req, res) => {
+  const { userId } = req.body;
   const id = req.params.id;
-  meta[id] = meta[id] || {};
-  meta[id].title =
-    req.body.title || autoTitleFromMessages(conversations[id] || []);
-  res.json({ title: meta[id].title });
+  if (!userId) return res.status(400).json({ error: "Missing userId" });
+
+  meta[userId][id] = meta[userId][id] || {};
+  meta[userId][id].title =
+    req.body.title || autoTitleFromMessages(conversations[userId][id] || []);
+  res.json({ title: meta[userId][id].title });
 });
 
-// Upload endpoint - .txt extraction and pdf via pdf-parse
+/* =====================================================
+   📎 POST /api/upload → Handle .txt and .pdf Uploads
+===================================================== */
 app.post("/api/upload", upload.single("file"), async (req, res) => {
-  if (!req.file) return res.status(400).json({ error: "no file" });
-  const path = req.file.path;
+  if (!req.file) return res.status(400).json({ error: "No file uploaded" });
+
+  const filePath = req.file.path;
   const filename = req.file.originalname;
   try {
-    if (filename.endsWith(".txt") || req.file.mimetype === "text/plain") {
-      const txt = fs.readFileSync(path, "utf8");
-      return res.json({ attachmentId: req.file.filename, text: txt, filename });
-    } else if (
-      filename.endsWith(".pdf") ||
-      req.file.mimetype === "application/pdf"
-    ) {
-      const data = fs.readFileSync(path);
-      try {
-        const parsed = await pdf(data);
-        return res.json({
-          attachmentId: req.file.filename,
-          text: parsed.text || "",
-          filename,
-        });
-      } catch (err) {
-        return res.json({
-          attachmentId: req.file.filename,
-          text: "[PDF extraction failed: " + err.message + "]",
-          filename,
-        });
-      }
-    } else {
-      return res.json({ attachmentId: req.file.filename, text: "", filename });
+    if (filename.endsWith(".txt")) {
+      const text = fs.readFileSync(filePath, "utf8");
+      return res.json({ attachmentId: req.file.filename, text, filename });
     }
+
+    if (filename.endsWith(".pdf")) {
+      const buffer = fs.readFileSync(filePath);
+      const parsed = await pdf(buffer);
+      return res.json({
+        attachmentId: req.file.filename,
+        text: parsed.text || "",
+        filename,
+      });
+    }
+
+    return res.json({
+      attachmentId: req.file.filename,
+      text: "",
+      filename,
+    });
   } finally {
-    // clean up uploaded file
-    setTimeout(() => {
-      try {
-        fs.unlinkSync(path);
-      } catch {}
-    }, 20000);
+    setTimeout(() => fs.unlink(filePath, () => {}), 10000);
   }
 });
 
-// 🔹 Development-only route to clear all stored chats
+/* =====================================================
+   🧹 POST /api/clear → Clear All Conversations (dev)
+===================================================== */
 app.post("/api/clear", (req, res) => {
-  for (const key in conversations) delete conversations[key];
-  res.json({ status: "✅ All in-memory conversations cleared." });
+  Object.keys(conversations).forEach((u) => delete conversations[u]);
+  Object.keys(meta).forEach((u) => delete meta[u]);
+  res.json({ status: "✅ All user conversations cleared." });
 });
 
-app.listen(PORT, () => console.log("Server listening on", PORT));
+app.listen(PORT, () =>
+  console.log(`🚀 Backend running on http://localhost:${PORT}`)
+);
