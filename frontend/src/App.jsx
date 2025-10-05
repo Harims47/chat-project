@@ -11,6 +11,19 @@ const MOCK_REPLIES = [
   "Mock reply: your system is working fine locally!",
 ];
 
+const WELCOME_MESSAGES = [
+  "What’s on your mind today?",
+  "Hey there 👋, what can I help you with today?",
+  "Ready to brainstorm something awesome?",
+  "Got a question or idea? Let’s talk!",
+  "Welcome back! What shall we explore this time?",
+  "Let’s dive into something new 💡",
+  "Your thoughts, my responses — what’s next?",
+  "Start typing to begin a new conversation 📝",
+  "Need help or just exploring? I’m all ears 👂",
+  "What would you like to discuss today?",
+];
+
 function useLocal(key, initial) {
   const [state, setState] = useState(() => {
     try {
@@ -41,6 +54,8 @@ export default function App() {
     "sysPrompt",
     "Default assistant behavior"
   );
+  const [welcomeMsg, setWelcomeMsg] = useState("");
+
   const [attachments, setAttachments] = useState([]);
   const [searchTerm, setSearchTerm] = useState("");
   const filteredConversations = conversations
@@ -330,34 +345,33 @@ export default function App() {
     connectSSE(content || systemPrompt);
   }
 
- function onFileChange(e) {
-   const f = e.target.files[0];
-   if (!f) return;
+  function onFileChange(e) {
+    const f = e.target.files[0];
+    if (!f) return;
 
-   const validTypes = ["text/plain", "application/pdf"];
-   const validExts = [".txt", ".pdf"];
+    const validTypes = ["text/plain", "application/pdf"];
+    const validExts = [".txt", ".pdf"];
 
-   // Client-side validation
-   const ext = f.name.slice(f.name.lastIndexOf(".")).toLowerCase();
-   if (!validTypes.includes(f.type) && !validExts.includes(ext)) {
-     alert("Only .txt and .pdf files are allowed.");
-     e.target.value = "";
-     return;
-   }
+    // Client-side validation
+    const ext = f.name.slice(f.name.lastIndexOf(".")).toLowerCase();
+    if (!validTypes.includes(f.type) && !validExts.includes(ext)) {
+      alert("Only .txt and .pdf files are allowed.");
+      e.target.value = "";
+      return;
+    }
 
-   const form = new FormData();
-   form.append("file", f);
-   fetch(API + "/api/upload", { method: "POST", body: form })
-     .then((r) => r.json())
-     .then((data) => {
-       if (data.attachmentId) {
-         setAttachments((prev) => [...prev, data]);
-       }
-     })
-     .catch(() => {});
-   e.target.value = "";
- }
-
+    const form = new FormData();
+    form.append("file", f);
+    fetch(API + "/api/upload", { method: "POST", body: form })
+      .then((r) => r.json())
+      .then((data) => {
+        if (data.attachmentId) {
+          setAttachments((prev) => [...prev, data]);
+        }
+      })
+      .catch(() => {});
+    e.target.value = "";
+  }
 
   function copyText(text) {
     navigator.clipboard.writeText(text);
@@ -433,6 +447,10 @@ export default function App() {
       if (data.conversationId) {
         // ✅ Clear any previous active chat
         setMessages([]);
+        setWelcomeMsg(
+          WELCOME_MESSAGES[Math.floor(Math.random() * WELCOME_MESSAGES.length)]
+        );
+
         setActive(data.conversationId);
 
         // ✅ Store clean state locally
@@ -528,52 +546,47 @@ export default function App() {
 
       <main className="flex-1 flex flex-col">
         <div className="flex-1 overflow-auto p-4" ref={scrollRef}>
-          {messages.map((m) => (
-            <div
-              key={m.id}
-              className={`max-w-[70%] my-2 p-3 rounded ${
-                m.role === "user"
-                  ? "ml-auto bg-blue-600 text-white"
-                  : "bg-gray-200 dark:bg-gray-800"
-              }`}>
-              <div className="whitespace-pre-wrap">{m.content}</div>
-              {/* <div className="flex justify-between items-center mt-2 text-xs text-white-500">
-                <div>{formatTime(m.ts)}</div>
-                <div className="flex gap-2">
-                  <button
-                    onClick={() => copyText(m.content)}
-                    className="underline">
-                    Copy
-                  </button>
-                  {m.role === "assistant" && (
-                    <button onClick={() => retry(m)} className="underline">
-                      Retry
-                    </button>
-                  )}
-                </div>
-              </div> */}
-              <div className="flex justify-between items-center mt-2 text-xs text-white-500">
-                <div>{formatTime(m.ts)}</div>
-                <div className="flex gap-3 items-center">
-                  <button
-                    onClick={() => copyText(m.content)}
-                    title="Copy message"
-                    className="text-white hover:text-blue-500 transition-colors">
-                    <Copy size={14} />
-                  </button>
-
-                  {m.role === "assistant" && (
-                    <button
-                      onClick={() => retry(m)}
-                      title="Retry"
-                      className="text-white hover:text-green-500 transition-colors">
-                      <RefreshCcw size={14} />
-                    </button>
-                  )}
-                </div>
+          {messages.length === 0 ? (
+            <div className="flex flex-col items-center justify-center h-full text-center text-gray-500 dark:text-gray-400 animate-fade-in">
+              <div className="text-lg font-medium mb-2">
+                {welcomeMsg || "What’s on your mind today?"}
+              </div>
+              <div className="text-sm">
+                Start typing below to begin a new chat 💬
               </div>
             </div>
-          ))}
+          ) : (
+            messages.map((m) => (
+              <div
+                key={m.id}
+                className={`max-w-[70%] my-2 p-3 rounded ${
+                  m.role === "user"
+                    ? "ml-auto bg-blue-600 text-white"
+                    : "bg-gray-200 dark:bg-gray-800"
+                }`}>
+                <div className="whitespace-pre-wrap">{m.content}</div>
+                <div className="flex justify-between items-center mt-2 text-xs text-white-500">
+                  <div>{formatTime(m.ts)}</div>
+                  <div className="flex gap-3 items-center">
+                    <button
+                      onClick={() => copyText(m.content)}
+                      title="Copy message"
+                      className="text-white hover:text-blue-500 transition-colors">
+                      <Copy size={14} />
+                    </button>
+                    {m.role === "assistant" && (
+                      <button
+                        onClick={() => retry(m)}
+                        title="Retry"
+                        className="text-white hover:text-green-500 transition-colors">
+                        <RefreshCcw size={14} />
+                      </button>
+                    )}
+                  </div>
+                </div>
+              </div>
+            ))
+          )}
           {streaming && (
             <div className="italic text-sm">
               Assistant is typing...{" "}
