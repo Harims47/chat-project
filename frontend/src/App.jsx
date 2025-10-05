@@ -447,9 +447,7 @@ export default function App() {
       if (data.conversationId) {
         // ✅ Clear any previous active chat
         setMessages([]);
-        setWelcomeMsg(
-          WELCOME_MESSAGES[Math.floor(Math.random() * WELCOME_MESSAGES.length)]
-        );
+        setWelcomeMsg(getWelcomeMessage());
 
         setActive(data.conversationId);
 
@@ -469,6 +467,31 @@ export default function App() {
       if (window.innerWidth < 768) setSidebarOpen(false); // close sidebar on mobile
     }
   };
+
+  function getWelcomeMessage() {
+    const hour = new Date().getHours();
+    let timeGreeting = "";
+
+    if (hour < 12) timeGreeting = "Good morning ☀️";
+    else if (hour < 18) timeGreeting = "Good afternoon 🌤️";
+    else timeGreeting = "Good evening 🌙";
+
+    const randomIntros = [
+      "What’s on your mind today?",
+      "How can I help you today?",
+      "Got a question or idea? Let’s talk!",
+      "Ready to brainstorm something awesome?",
+      "Let’s make something amazing together!",
+      "Need help or just exploring? I’m all ears 👂",
+      "Start typing below to begin your chat 💬",
+      "Excited to chat with you — what shall we do today?",
+      "Your thoughts, my words — what’s next?",
+      "Ready when you are 😊",
+    ];
+
+    const intro = randomIntros[Math.floor(Math.random() * randomIntros.length)];
+    return `${timeGreeting}! ${intro}`;
+  }
 
   return (
     <div className="h-screen flex flex-col md:flex-row bg-gray-50 dark:bg-gray-900 text-gray-900 dark:text-gray-100">
